@@ -1,0 +1,90 @@
+{
+  "name": "live-cricket-score",
+  "displayName": "Live Cricket Score",
+  "publisher": "saathvik",
+  "description": "Get live cricket scores right in your VS Code editor",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "repository": {
+  "type": "git",
+  "url": "https://github.com/saathviksheerla/live-cricket-score-vscode-extension.git"
+},
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "live-cricket-score.showScore",
+        "title": "Cricket: Show Quick Score"
+      },
+      {
+        "command": "live-cricket-score.showDetailedScore",
+        "title": "Cricket: Show Detailed Score"
+      },
+      {
+        "command": "live-cricket-score.selectMatch",
+        "title": "Cricket: Select Match"
+      },
+      {
+        "command": "live-cricket-score.startAutoRefresh",
+        "title": "Cricket: Start Auto Refresh"
+      },
+      {
+        "command": "live-cricket-score.stopAutoRefresh",
+        "title": "Cricket: Stop Auto Refresh"
+      }
+    ],
+    "configuration": {
+      "title": "Live Cricket Score",
+      "properties": {
+        "liveCricketScore.rapidApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your RapidAPI key for accessing the cricket score API"
+        },
+        "liveCricketScore.autoRefreshOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start refreshing cricket scores when VS Code starts"
+        },
+        "liveCricketScore.showInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show cricket score in status bar"
+        },
+        "liveCricketScore.refreshInterval": {
+          "type": "number",
+          "default": 30,
+          "description": "Interval in seconds to refresh cricket scores"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "pretest": "npm run lint",
+    "test": "node ./test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/glob": "^7.2.0",
+    "@types/mocha": "^9.1.1",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.70.0",
+    "eslint": "^8.18.0",
+    "glob": "^8.0.3",
+    "mocha": "^10.0.0",
+    "typescript": "^4.7.4",
+    "vscode-test": "^1.6.1"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0"
+  }
+}
