@@ -9,9 +9,9 @@
     "vscode": "^1.70.0"
   },
   "repository": {
-  "type": "git",
-  "url": "https://github.com/saathviksheerla/live-cricket-score-vscode-extension.git"
-},
+    "type": "git",
+    "url": "https://github.com/saathviksheerla/live-cricket-score-vscode-extension.git"
+  },
   "categories": [
     "Other"
   ],
@@ -86,6 +86,7 @@
   },
   "dependencies": {
     "axios": "^1.9.0",
-    "dotenv": "^16.5.0"
+    "dotenv": "^16.5.0",
+    "live-cricket-score": "file:"
   }
 }

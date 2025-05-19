@@ -67,12 +67,18 @@ async function getActiveMatches() {
       return seriesMatches.flatMap(series => {
         // Safely access the matches array
         const matches = series.seriesAdWrapper?.matches || [];
-        return matches.map(match => ({
-          id: match.matchInfo.matchId,
-          teams: `${match.matchInfo.team1.teamName} vs ${match.matchInfo.team2.teamName}`,
-          type: match.matchInfo.matchFormat,
-          status: match.matchInfo.status
-        }));
+        return matches
+  .filter(match => {
+    const status = match.matchInfo?.status?.toLowerCase();
+    return status && (status.includes('live') || status.includes('day') || status.includes('innings') || status.includes('in progress'));
+  })
+  .map(match => ({
+    id: match.matchInfo.matchId,
+    teams: `${match.matchInfo.team1.teamName} vs ${match.matchInfo.team2.teamName}`,
+    type: match.matchInfo.matchFormat,
+    status: match.matchInfo.status
+  }));
+
       });
     });
   } catch (error) {
@@ -93,7 +99,7 @@ async function getApiKey() {
       return process.env.RAPID_API_KEY;
     }
     
-    // Prompt user for API key
+    // Prompt user for API key 
     apiKey = await vscode.window.showInputBox({
       placeHolder: 'Enter your RapidAPI key',
       prompt: 'API key is required to fetch cricket scores. Get one from RapidAPI.',
