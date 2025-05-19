@@ -2,8 +2,9 @@
   "name": "live-cricket-score",
   "displayName": "Live Cricket Score",
   "publisher": "saathvik",
+  "icon": "images/logo.png",
   "description": "Get live cricket scores right in your VS Code editor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "engines": {
     "vscode": "^1.70.0"
   },
