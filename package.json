@@ -4,7 +4,7 @@
   "publisher": "saathvik",
   "icon": "images/logo.png",
   "description": "Get live cricket scores right in your VS Code editor",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "engines": {
     "vscode": "^1.70.0"
   },
@@ -89,7 +89,6 @@
   "dependencies": {
     "axios": "^1.9.0",
     "cheerio": "^1.0.0-rc.12",
-    "dotenv": "^16.5.0",
-    "vscode": "^1.1.37"
+    "dotenv": "^16.5.0"
   }
 }
