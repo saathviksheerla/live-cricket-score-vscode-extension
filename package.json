@@ -9,61 +9,63 @@
     "vscode": "^1.70.0"
   },
   "repository": {
-  "type": "git",
-  "url": "https://github.com/saathviksheerla/live-cricket-score-vscode-extension.git"
-},
+    "type": "git",
+    "url": "https://github.com/saathviksheerla/live-cricket-score-vscode-extension.git"
+  },
   "categories": [
     "Other"
   ],
   "activationEvents": [
     "onStartupFinished"
   ],
+  "keywords": [
+    "cricket",
+    "sports",
+    "live scores",
+    "entertainment"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "live-cricket-score.showScore",
-        "title": "Cricket: Show Quick Score"
+        "command": "cricketScore.showMatches",
+        "title": "Show Live Cricket Matches",
+        "category": "Cricket"
       },
       {
-        "command": "live-cricket-score.showDetailedScore",
-        "title": "Cricket: Show Detailed Score"
+        "command": "cricketScore.selectMatch",
+        "title": "Select Cricket Match",
+        "category": "Cricket"
       },
       {
-        "command": "live-cricket-score.selectMatch",
-        "title": "Cricket: Select Match"
+        "command": "cricketScore.refreshMatches",
+        "title": "Refresh Cricket Matches",
+        "category": "Cricket"
       },
       {
-        "command": "live-cricket-score.startAutoRefresh",
-        "title": "Cricket: Start Auto Refresh"
+        "command": "cricketScore.stopAutoRefresh",
+        "title": "Stop Cricket Auto-refresh",
+        "category": "Cricket"
       },
       {
-        "command": "live-cricket-score.stopAutoRefresh",
-        "title": "Cricket: Stop Auto Refresh"
+        "command": "cricketScore.openWebview",
+        "title": "Open Cricket Webview",
+        "category": "Cricket"
       }
     ],
     "configuration": {
       "title": "Live Cricket Score",
       "properties": {
-        "liveCricketScore.rapidApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "Your RapidAPI key for accessing the cricket score API"
-        },
-        "liveCricketScore.autoRefreshOnStartup": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically start refreshing cricket scores when VS Code starts"
-        },
-        "liveCricketScore.showInStatusBar": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show cricket score in status bar"
-        },
-        "liveCricketScore.refreshInterval": {
+        "cricketScore.refreshRate": {
           "type": "number",
           "default": 30,
-          "description": "Interval in seconds to refresh cricket scores"
+          "description": "Auto-refresh interval in seconds",
+          "minimum": 5
+        },
+        "cricketScore.showInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show cricket scores in status bar"
         }
       }
     }
@@ -86,6 +88,8 @@
   },
   "dependencies": {
     "axios": "^1.9.0",
-    "dotenv": "^16.5.0"
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.5.0",
+    "vscode": "^1.1.37"
   }
 }

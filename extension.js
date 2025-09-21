@@ -1,490 +1,414 @@
-// extension.js
+// extension.js - VS Code Extension for Cricket Score App
 const vscode = require('vscode');
-const axios = require('axios');
-require('dotenv').config(); // For loading API key from .env file
+const { CricketScraper, CricketService, CricketDisplay } = require('./app');
 
-// Configuration options
-const DEFAULT_MATCH_ID = '41881'; // Default match ID to fetch data for
+let cricketService;
 let statusBarItem;
-let currentMatchId = DEFAULT_MATCH_ID;
-let refreshIntervalId = null;
+let webviewPanel;
+let outputChannel;
 
 /**
- * @param {vscode.ExtensionContext} context
+ * Extension activation function
  */
 function activate(context) {
-  console.log('Congratulations, your extension "live-cricket-score" is now active!');
-  
-  // Create status bar item
-  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.command = 'live-cricket-score.showDetailedScore';
-  statusBarItem.tooltip = 'Click to show detailed cricket score';
-  statusBarItem.text = '$(symbol-event) Cricket Score';
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
-  
-  // Register commands
-  context.subscriptions.push(
-    vscode.commands.registerCommand('live-cricket-score.showScore', showLiveCricketScore),
-    vscode.commands.registerCommand('live-cricket-score.showDetailedScore', showDetailedLiveCricketScore),
-    vscode.commands.registerCommand('live-cricket-score.selectMatch', selectCricketMatch),
-    vscode.commands.registerCommand('live-cricket-score.startAutoRefresh', startAutoRefresh),
-    vscode.commands.registerCommand('live-cricket-score.stopAutoRefresh', stopAutoRefresh)
-  );
-  
-  // Check if auto-refresh is enabled in settings
-  const config = vscode.workspace.getConfiguration('liveCricketScore');
-  if (config.get('autoRefreshOnStartup')) {
-    startAutoRefresh();
-  }
-  
-  // Show initial message to guide users
-  vscode.window.showInformationMessage('Live Cricket Score extension is active! Use the command palette and type "Cricket:" to see available commands.');
+    console.log('Cricket Score extension is now active!');
+
+    // Initialize services
+    const scraper = new CricketScraper();
+    cricketService = new CricketService(scraper);
+    
+    // Create output channel
+    outputChannel = vscode.window.createOutputChannel('Cricket Scores');
+    
+    // Create status bar item
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBarItem.text = '🏏 Cricket';
+    statusBarItem.tooltip = 'Click to view cricket scores';
+    statusBarItem.command = 'cricketScore.showMatches';
+    statusBarItem.show();
+
+    // Setup event handlers
+    setupEventHandlers();
+
+    // Register commands
+    const commands = [
+        vscode.commands.registerCommand('cricketScore.showMatches', showMatches),
+        vscode.commands.registerCommand('cricketScore.selectMatch', selectMatch),
+        vscode.commands.registerCommand('cricketScore.refreshMatches', refreshMatches),
+        vscode.commands.registerCommand('cricketScore.stopAutoRefresh', stopAutoRefresh),
+        vscode.commands.registerCommand('cricketScore.openWebview', openWebview)
+    ];
+
+    context.subscriptions.push(statusBarItem, outputChannel, ...commands);
 }
 
-// Fetch list of active/recent matches
-async function getActiveMatches() {
-  try {
-    // Get API key first
-    const apiKey = await getApiKey();
-    if (!apiKey) {
-      vscode.window.showErrorMessage('API key is required to fetch cricket matches');
-      return [];
-    }
-    
-    const response = await axios.get("https://cricbuzz-cricket.p.rapidapi.com/matches/v1/recent", {
-      headers: {
-        'X-RapidAPI-Host': 'cricbuzz-cricket.p.rapidapi.com',
-        'X-RapidAPI-Key': apiKey
-      }
+/**
+ * Setup event handlers for cricket service
+ */
+function setupEventHandlers() {
+    cricketService.on('matchesUpdated', (matches) => {
+        outputChannel.appendLine(`\n${CricketDisplay.formatMatchList(matches)}`);
     });
 
-    // Handle the case where the response structure might be different
-    const typeMatches = response.data.typeMatches || [];
-    
-    return typeMatches.flatMap(type => {
-      const seriesMatches = type.seriesMatches || [];
-      return seriesMatches.flatMap(series => {
-        // Safely access the matches array
-        const matches = series.seriesAdWrapper?.matches || [];
-        return matches.map(match => ({
-          id: match.matchInfo.matchId,
-          teams: `${match.matchInfo.team1.teamName} vs ${match.matchInfo.team2.teamName}`,
-          type: match.matchInfo.matchFormat,
-          status: match.matchInfo.status
+    cricketService.on('matchSelected', (match) => {
+        statusBarItem.text = `🏏 ${match.teams[0]?.name || 'Match'} vs ${match.teams[1]?.name || 'Match'}`;
+        statusBarItem.tooltip = `Live: ${match.title}`;
+        outputChannel.appendLine(`\nAuto-refresh started for: ${match.title}`);
+        outputChannel.appendLine(CricketDisplay.formatMatchDetails(match));
+        outputChannel.show(true);
+    });
+
+    cricketService.on('matchUpdated', (match) => {
+        outputChannel.clear();
+        outputChannel.appendLine(`[AUTO-REFRESH] Updated at: ${new Date().toLocaleTimeString()}`);
+        outputChannel.appendLine(CricketDisplay.formatMatchDetails(match));
+        
+        // Update status bar with live score
+        const team1 = match.teams[0];
+        const team2 = match.teams[1];
+        if (team1 && team2) {
+            const score1 = team1.score ? `${team1.score}` : '';
+            const score2 = team2.score ? `${team2.score}` : '';
+            statusBarItem.text = `🏏 ${team1.name} ${score1} vs ${team2.name} ${score2}`;
+        }
+        
+        // Update webview if open
+        if (webviewPanel) {
+            updateWebview(match);
+        }
+    });
+
+    cricketService.on('error', (error) => {
+        outputChannel.appendLine(`Error: ${error.message}`);
+        vscode.window.showErrorMessage(`Cricket Score Error: ${error.message}`);
+    });
+}
+
+/**
+ * Show matches in quick pick
+ */
+async function showMatches() {
+    try {
+        vscode.window.showInformationMessage('Fetching live cricket matches...');
+        
+        const initialized = await cricketService.initialize();
+        if (!initialized) {
+            vscode.window.showErrorMessage('Failed to fetch cricket matches');
+            return;
+        }
+
+        const matches = cricketService.getAllMatches();
+        
+        if (matches.length === 0) {
+            vscode.window.showInformationMessage('No live matches available');
+            return;
+        }
+
+        const items = matches.map(match => ({
+            label: match.title,
+            description: match.statusText,
+            detail: `${match.ground} • ${match.series}`,
+            matchId: match.id,
+            match: match
         }));
-      });
-    });
-  } catch (error) {
-    console.error('Error fetching matches:', error.message);
-    vscode.window.showErrorMessage('Error fetching cricket matches. Check your API key and internet connection.');
-    return [];
-  }
+
+        const selectedItem = await vscode.window.showQuickPick(items, {
+            placeHolder: 'Select a cricket match to follow',
+            matchOnDescription: true,
+            matchOnDetail: true
+        });
+
+        if (selectedItem) {
+            cricketService.selectMatch(selectedItem.matchId);
+            
+            // Ask if user wants to open webview
+            const openWebview = await vscode.window.showQuickPick(['Yes', 'No'], {
+                placeHolder: 'Open in webview for better viewing experience?'
+            });
+            
+            if (openWebview === 'Yes') {
+                await openWebviewCommand();
+            }
+        }
+
+    } catch (error) {
+        vscode.window.showErrorMessage(`Error fetching matches: ${error.message}`);
+    }
 }
 
-// Get API key from settings or prompt user
-async function getApiKey() {
-  const config = vscode.workspace.getConfiguration('liveCricketScore');
-  let apiKey = config.get('rapidApiKey');
-  
-  if (!apiKey) {
-    // Try to get from .env if available during development
-    if (process.env.RAPID_API_KEY) {
-      return process.env.RAPID_API_KEY;
-    }
+/**
+ * Select a specific match
+ */
+async function selectMatch() {
+    const matches = cricketService.getAllMatches();
     
-    // Prompt user for API key
-    apiKey = await vscode.window.showInputBox({
-      placeHolder: 'Enter your RapidAPI key',
-      prompt: 'API key is required to fetch cricket scores. Get one from RapidAPI.',
-      ignoreFocusOut: true
-    });
-    
-    // Save the API key if provided
-    if (apiKey) {
-      await config.update('rapidApiKey', apiKey, vscode.ConfigurationTarget.Global);
-      vscode.window.showInformationMessage('API key saved');
-    } else {
-      vscode.window.showWarningMessage('API key is required for Live Cricket Score extension');
+    if (matches.length === 0) {
+        await showMatches();
+        return;
     }
-  }
-  
-  return apiKey;
-}
 
-// Fetch live cricket score by match ID
-async function getLiveCricketScore(matchId = currentMatchId) {
-  try {
-    // Get API key first
-    const apiKey = await getApiKey();
-    if (!apiKey) {
-      vscode.window.showErrorMessage('API key is required to fetch cricket scores');
-      return null;
-    }
-    
-    const response = await axios.get(`https://cricbuzz-cricket.p.rapidapi.com/mcenter/v1/${matchId}/comm`, {
-      headers: {
-        'X-RapidAPI-Host': 'cricbuzz-cricket.p.rapidapi.com',
-        'X-RapidAPI-Key': apiKey
-      }
+    const items = matches.map(match => ({
+        label: match.title,
+        description: match.statusText,
+        matchId: match.id
+    }));
+
+    const selectedItem = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select a match'
     });
 
-    return response.data;
-  } catch (error) {
-    console.error('Error fetching cricket score:', error.message);
-    vscode.window.showErrorMessage('Error fetching cricket score. Check your API key and internet connection.');
-    return null;
-  }
+    if (selectedItem) {
+        cricketService.selectMatch(selectedItem.matchId);
+    }
 }
 
-// Format score for status bar - short form
-function formatStatusBarScore(data) {
-  if (!data || !data.matchHeader || !data.miniscore) {
-    return '$(symbol-event) No match data';
-  }
-
-  const match = data.matchHeader;
-  const miniscore = data.miniscore;
-  const innings = miniscore.matchScoreDetails?.inningsScoreList || [];
-  
-  // Get short team names (using initials if needed)
-  const team1Short = getShortTeamName(match.team1.name);
-  const team2Short = getShortTeamName(match.team2.name);
-  
-  // Use a cricket ball emoji to indicate this is cricket
-  let statusText = '$(symbol-event) ';
-  
-  if (!innings || innings.length === 0) {
-    return `${statusText}${team1Short} vs ${team2Short} | Match yet to start`;
-  }
-  
-  try {
-    const team1Innings = innings.find(inning => inning.batTeamId === match.team1.id);
-    const team2Innings = innings.find(inning => inning.batTeamId === match.team2.id);
-    
-    // Format the text based on match state
-    if (team1Innings) {
-      statusText += `${team1Short} ${team1Innings.score}/${team1Innings.wickets}`;
+/**
+ * Refresh matches
+ */
+async function refreshMatches() {
+    try {
+        await cricketService.initialize();
+        vscode.window.showInformationMessage('Matches refreshed!');
+    } catch (error) {
+        vscode.window.showErrorMessage(`Error refreshing matches: ${error.message}`);
     }
-    
-    if (team2Innings) {
-      statusText += ` | ${team2Short} ${team2Innings.score}/${team2Innings.wickets}`;
-    } else if (team1Innings) {
-      statusText += ` | ${team2Short} yet to bat`;
-    }
-    
-    return statusText;
-  } catch (error) {
-    console.error('Error formatting status bar score:', error);
-    return `${statusText}${team1Short} vs ${team2Short}`;
-  }
 }
 
-// Get short team name (abbreviation or first 3 chars)
-function getShortTeamName(teamName) {
-  // Common cricket team abbreviations
-  const abbreviations = {
-    'India': 'IND',
-    'Australia': 'AUS',
-    'England': 'ENG',
-    'Pakistan': 'PAK',
-    'South Africa': 'SA',
-    'New Zealand': 'NZ',
-    'West Indies': 'WI',
-    'Sri Lanka': 'SL',
-    'Bangladesh': 'BAN',
-    'Zimbabwe': 'ZIM',
-    'Afghanistan': 'AFG'
-  };
-  
-  return abbreviations[teamName] || teamName.substring(0, 3).toUpperCase();
+/**
+ * Stop auto refresh
+ */
+function stopAutoRefresh() {
+    cricketService.stopAutoRefresh();
+    statusBarItem.text = '🏏 Cricket';
+    statusBarItem.tooltip = 'Click to view cricket scores';
+    vscode.window.showInformationMessage('Auto-refresh stopped');
 }
 
-// Format detailed score info for WebView panel
-function formatDetailedScore(data) {
-  if (!data || !data.matchHeader || !data.miniscore) {
-    return '<h2>No match data available</h2>';
-  }
-
-  const match = data.matchHeader;
-  const miniscore = data.miniscore;
-  const innings = miniscore.matchScoreDetails?.inningsScoreList || [];
-  const team1 = match.team1;
-  const team2 = match.team2;
-
-  // Get current batting team
-  const currentBatTeamName = miniscore.batTeam?.batTeamName;
-  const bowlingTeam = (currentBatTeamName === team1.name) ? team2.name : team1.name;
-  const team1Innings = innings.find(inning => inning.batTeamId === team1.id);
-  const team2Innings = innings.find(inning => inning.batTeamId === team2.id);
-
-  const isMatchComplete = match.status?.toLowerCase().includes('won');
-  const isFirstInningsOnly = innings.length === 1;
-  const isSecondInningsLive = innings.length === 2 && !isMatchComplete;
-
-  // Build HTML content
-  let html = `
-    <html>
-    <head>
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif; padding: 10px; }
-        h1 { font-size: 18px; margin-bottom: 5px; }
-        h2 { font-size: 16px; margin-top: 5px; color: #888; }
-        .score-card { margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
-        .active { background-color: rgba(65, 184, 131, 0.1); border-color: #41b883; }
-        .complete { background-color: rgba(66, 153, 225, 0.1); }
-        .team-name { font-weight: bold; }
-        .status { color: #e56643; font-weight: bold; }
-        .target { color: #d946ef; }
-        .batsmen-info { margin-top: 10px; }
-        .batsman { padding: 2px 0; }
-        .timestamp { color: #888; font-size: 12px; margin-top: 20px; }
-      </style>
-    </head>
-    <body>
-      <h1>${team1.name} vs ${team2.name}</h1>
-      <h2 class="status">${match.status || 'Live match in progress'}</h2>
-  `;
-
-  // Match Complete
-  if (isMatchComplete) {
-    html += `<div class="score-card complete">
-      <h3>Match Complete</h3>`;
-    
-    if (team1Innings) {
-      html += `<div><span class="team-name">${team1.name}:</span> ${team1Innings.score}/${team1Innings.wickets} in ${team1Innings.overs} overs</div>`;
+/**
+ * Open webview panel
+ */
+async function openWebviewCommand() {
+    if (webviewPanel) {
+        webviewPanel.reveal();
+        return;
     }
-    
-    if (team2Innings) {
-      html += `<div><span class="team-name">${team2.name}:</span> ${team2Innings.score}/${team2Innings.wickets} in ${team2Innings.overs} overs</div>`;
-    }
-    
-    html += `</div>`;
-  }
-  // First Innings in Progress
-  else if (isFirstInningsOnly) {
-    const currentInnings = innings[0];
-    
-    html += `<div class="score-card active">
-      <div><span class="team-name">${currentInnings.batTeamName}:</span> ${currentInnings.score}/${currentInnings.wickets}</div>
-      <div>Overs: ${miniscore.overs}</div>`;
-    
-    // Add batsmen info if available
-    if (miniscore.batsmanStriker) {
-      html += `<div class="batsmen-info">
-        <div class="batsman">${miniscore.batsmanStriker.batName}: ${miniscore.batsmanStriker.batRuns} (${miniscore.batsmanStriker.batBalls}) *</div>
-        <div class="batsman">${miniscore.batsmanNonStriker.batName}: ${miniscore.batsmanNonStriker.batRuns} (${miniscore.batsmanNonStriker.batBalls})</div>
-      </div>`;
-    }
-    
-    html += `</div>
-    
-    <div class="score-card">
-      <div><span class="team-name">${bowlingTeam}</span> yet to bat</div>
-    </div>`;
-  }
-  // Second Innings in Progress
-  else if (isSecondInningsLive) {
-    html += `<div class="score-card">`;
-    
-    if (team1Innings) {
-      html += `<div><span class="team-name">${team1.name}:</span> ${team1Innings.score}/${team1Innings.wickets} in ${team1Innings.overs} overs</div>`;
-    }
-    
-    html += `</div>
-    
-    <div class="score-card active">`;
-    
-    if (team2Innings) {
-      html += `<div><span class="team-name">${team2.name}:</span> ${team2Innings.score}/${team2Innings.wickets}</div>
-      <div>Overs: ${miniscore.overs}</div>
-      <div class="target">Target: ${team1Innings.score + 1}</div>`;
-      
-      // Add batsmen info if available
-      if (miniscore.batsmanStriker) {
-        html += `<div class="batsmen-info">
-          <div class="batsman">${miniscore.batsmanStriker.batName}: ${miniscore.batsmanStriker.batRuns} (${miniscore.batsmanStriker.batBalls}) *</div>
-          <div class="batsman">${miniscore.batsmanNonStriker.batName}: ${miniscore.batsmanNonStriker.batRuns} (${miniscore.batsmanNonStriker.batBalls})</div>
-        </div>`;
-      }
-    }
-    
-    html += `</div>`;
-  }
 
-  html += `
-      <div class="timestamp">Updated at: ${new Date().toLocaleTimeString()}</div>
-    </body>
-    </html>`;
+    const match = cricketService.getSelectedMatch();
+    if (!match) {
+        vscode.window.showWarningMessage('Please select a match first');
+        return;
+    }
 
-  return html;
+    await openWebview(match);
 }
 
-// Command: Show live cricket score in information message
-async function showLiveCricketScore() {
-  try {
-    const data = await getLiveCricketScore();
-    if (!data) {
-      vscode.window.showInformationMessage('No cricket score data available');
-      return;
-    }
-
-    // Format simple score for the info message
-    const match = data.matchHeader;
-    const miniscore = data.miniscore;
-    const innings = miniscore.matchScoreDetails?.inningsScoreList || [];
-    
-    if (innings.length === 0) {
-      vscode.window.showInformationMessage(`${match.team1.name} vs ${match.team2.name} - Match yet to start`);
-      return;
-    }
-    
-    const team1Innings = innings.find(inning => inning.batTeamId === match.team1.id);
-    const team2Innings = innings.find(inning => inning.batTeamId === match.team2.id);
-    
-    let scoreMessage = `${match.team1.name} vs ${match.team2.name} | `;
-    
-    if (team1Innings) {
-      scoreMessage += `${match.team1.name}: ${team1Innings.score}/${team1Innings.wickets} in ${team1Innings.overs} overs`;
-    }
-    
-    if (team2Innings) {
-      scoreMessage += ` | ${match.team2.name}: ${team2Innings.score}/${team2Innings.wickets} in ${team2Innings.overs} overs`;
-    }
-    
-    vscode.window.showInformationMessage(scoreMessage);
-    
-    // Also update status bar
-    updateStatusBar(data);
-  } catch (error) {
-    vscode.window.showErrorMessage(`Error fetching cricket score: ${error.message}`);
-  }
-}
-
-// Command: Show detailed live cricket score in webview panel
-async function showDetailedLiveCricketScore() {
-  try {
-    const data = await getLiveCricketScore();
-    if (!data) {
-      vscode.window.showInformationMessage('No cricket score data available');
-      return;
-    }
-
-    // Create and show a webview panel
-    const panel = vscode.window.createWebviewPanel(
-      'cricketScoreDetail', // Identifies the type of the panel
-      'Live Cricket Score', // Title of the panel
-      vscode.ViewColumn.One, // Editor column to show the panel in
-      { enableScripts: true } // Webview options
+/**
+ * Create and show webview
+ */
+async function openWebview(match) {
+    webviewPanel = vscode.window.createWebviewPanel(
+        'cricketScore',
+        `Cricket: ${match.title}`,
+        vscode.ViewColumn.One,
+        {
+            enableScripts: true,
+            retainContextWhenHidden: true
+        }
     );
 
-    // Set HTML content
-    panel.webview.html = formatDetailedScore(data);
-    
-    // Also update status bar
-    updateStatusBar(data);
-  } catch (error) {
-    vscode.window.showErrorMessage(`Error showing detailed cricket score: ${error.message}`);
-  }
-}
+    webviewPanel.webview.html = getWebviewContent(match);
 
-// Command: Select cricket match from active matches
-async function selectCricketMatch() {
-  try {
-    const matches = await getActiveMatches();
-    
-    if (!matches || matches.length === 0) {
-      vscode.window.showInformationMessage('No active cricket matches found');
-      return;
-    }
-    
-    // Create match selection items
-    const items = matches.map(match => ({
-      label: match.teams,
-      description: `${match.type} | ${match.status}`,
-      matchId: match.id
-    }));
-    
-    // Show quick pick
-    const selectedMatch = await vscode.window.showQuickPick(items, {
-      placeHolder: 'Select a cricket match'
+    // Handle webview disposal
+    webviewPanel.onDidDispose(() => {
+        webviewPanel = undefined;
     });
-    
-    if (selectedMatch) {
-      currentMatchId = selectedMatch.matchId;
-      vscode.window.showInformationMessage(`Selected match: ${selectedMatch.label}`);
-      
-      // Update score immediately
-      const data = await getLiveCricketScore(currentMatchId);
-      updateStatusBar(data);
-      
-      // If auto-refresh is on, restart it with new match id
-      if (refreshIntervalId) {
-        stopAutoRefresh();
-        startAutoRefresh();
-      }
+
+    // Handle messages from webview
+    webviewPanel.webview.onDidReceiveMessage(async (message) => {
+        switch (message.command) {
+            case 'refresh':
+                await refreshMatches();
+                break;
+            case 'changeMatch':
+                await selectMatch();
+                break;
+            case 'stop':
+                stopAutoRefresh();
+                break;
+        }
+    });
+}
+
+/**
+ * Update webview content
+ */
+function updateWebview(match) {
+    if (webviewPanel) {
+        webviewPanel.webview.postMessage({ 
+            command: 'update', 
+            match: match,
+            timestamp: new Date().toLocaleTimeString()
+        });
     }
-  } catch (error) {
-    vscode.window.showErrorMessage(`Error selecting cricket match: ${error.message}`);
-  }
 }
 
-// Update the status bar with score
-function updateStatusBar(data) {
-  if (!data) {
-    statusBarItem.text = '$(symbol-event) No cricket data';
-    statusBarItem.show();
-    return;
-  }
-  
-  statusBarItem.text = formatStatusBarScore(data);
-  statusBarItem.show();
+/**
+ * Generate webview HTML content
+ */
+function getWebviewContent(match) {
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Cricket Score</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background-color: var(--vscode-editor-background);
+                color: var(--vscode-editor-foreground);
+            }
+            .match-header {
+                background: var(--vscode-editor-selectionBackground);
+                padding: 15px;
+                border-radius: 8px;
+                margin-bottom: 20px;
+            }
+            .match-title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+            .match-series { opacity: 0.7; font-size: 14px; }
+            .teams {
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                margin-bottom: 20px;
+            }
+            .team {
+                background: var(--vscode-input-background);
+                padding: 12px;
+                border-radius: 6px;
+                border-left: 4px solid var(--vscode-accent-foreground);
+            }
+            .team-name { font-weight: bold; margin-bottom: 5px; }
+            .team-score { font-size: 16px; color: var(--vscode-terminal-ansiGreen); }
+            .match-status {
+                background: var(--vscode-badge-background);
+                color: var(--vscode-badge-foreground);
+                padding: 8px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+                margin-bottom: 15px;
+                display: inline-block;
+            }
+            .controls {
+                display: flex;
+                gap: 10px;
+                margin-top: 20px;
+            }
+            .btn {
+                background: var(--vscode-button-background);
+                color: var(--vscode-button-foreground);
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 13px;
+            }
+            .btn:hover {
+                background: var(--vscode-button-hoverBackground);
+            }
+            .last-updated {
+                margin-top: 20px;
+                opacity: 0.7;
+                font-size: 12px;
+            }
+            .live-indicator {
+                background: #ff4444;
+                color: white;
+                padding: 2px 6px;
+                border-radius: 3px;
+                font-size: 10px;
+                font-weight: bold;
+                animation: pulse 2s infinite;
+            }
+            @keyframes pulse {
+                0% { opacity: 1; }
+                50% { opacity: 0.5; }
+                100% { opacity: 1; }
+            }
+        </style>
+    </head>
+    <body>
+        <div id="content">
+            <div class="match-header">
+                <div class="match-title">${match.title}</div>
+                <div class="match-series">${match.series} • ${match.ground}</div>
+            </div>
+            
+            <div class="match-status">
+                ${match.isLive ? '<span class="live-indicator">LIVE</span> ' : ''}
+                ${match.statusText}
+            </div>
+            
+            <div class="teams">
+                ${match.teams.map(team => `
+                    <div class="team">
+                        <div class="team-name">${team.longName || team.name}</div>
+                        <div class="team-score">${team.score || 'Yet to bat'}</div>
+                    </div>
+                `).join('')}
+            </div>
+            
+            <div class="controls">
+                <button class="btn" onclick="sendMessage('refresh')">Refresh</button>
+                <button class="btn" onclick="sendMessage('changeMatch')">Change Match</button>
+                <button class="btn" onclick="sendMessage('stop')">Stop Auto-refresh</button>
+            </div>
+            
+            <div class="last-updated" id="lastUpdated">
+                Last updated: ${new Date().toLocaleTimeString()}
+            </div>
+        </div>
+
+        <script>
+            const vscode = acquireVsCodeApi();
+            
+            function sendMessage(command) {
+                vscode.postMessage({ command: command });
+            }
+            
+            window.addEventListener('message', event => {
+                const message = event.data;
+                if (message.command === 'update') {
+                    updateContent(message.match, message.timestamp);
+                }
+            });
+            
+            function updateContent(match, timestamp) {
+                document.getElementById('lastUpdated').textContent = 
+                    'Last updated: ' + timestamp;
+                // Could add more dynamic updates here
+            }
+        </script>
+    </body>
+    </html>`;
 }
 
-// Start auto-refresh of cricket score
-function startAutoRefresh() {
-  // Clear existing interval if any
-  stopAutoRefresh();
-  
-  // Get refresh interval from settings
-  const config = vscode.workspace.getConfiguration('liveCricketScore');
-  const refreshInterval = (config.get('refreshInterval') || 30) * 1000; // Convert to milliseconds
-  
-  // Start new interval
-  refreshIntervalId = setInterval(async () => {
-    try {
-      const data = await getLiveCricketScore(currentMatchId);
-      updateStatusBar(data);
-    } catch (error) {
-      console.error('Error refreshing cricket score:', error.message);
-    }
-  }, refreshInterval);
-  
-  vscode.window.showInformationMessage(`Auto-refresh started. Updating every ${refreshInterval/1000} seconds`);
-}
-
-// Stop auto-refresh of cricket score
-function stopAutoRefresh() {
-  if (refreshIntervalId) {
-    clearInterval(refreshIntervalId);
-    refreshIntervalId = null;
-    vscode.window.showInformationMessage('Auto-refresh stopped');
-  }
-}
-
-// This method is called when your extension is deactivated
+/**
+ * Extension deactivation function
+ */
 function deactivate() {
-  // Clean up resources
-  if (refreshIntervalId) {
-    clearInterval(refreshIntervalId);
-  }
-  
-  if (statusBarItem) {
-    statusBarItem.dispose();
-  }
+    if (cricketService) {
+        cricketService.stopAutoRefresh();
+    }
+    if (webviewPanel) {
+        webviewPanel.dispose();
+    }
 }
 
 module.exports = {
-  activate,
-  deactivate
+    activate,
+    deactivate
 };
