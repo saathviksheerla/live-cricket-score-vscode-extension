@@ -4,7 +4,7 @@
   "publisher": "saathvik",
   "icon": "images/logo.png",
   "description": "Get live cricket scores right in your VS Code editor",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "engines": {
     "vscode": "^1.70.0"
   },
